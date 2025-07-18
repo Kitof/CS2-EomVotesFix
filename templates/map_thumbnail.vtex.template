@@ -1,0 +1,45 @@
+<!-- dmx encoding keyvalues2_noids 1 format vtex 1 -->
+"CDmeVtex"
+{
+    "m_inputTextureArray" "element_array"
+    [
+		"CDmeInputTexture"
+		{
+			"m_name" "string" "InputTexture0"
+            "m_fileName" "string" "{{PNG_FULL_NAME}}"
+			"m_colorSpace" "string" "linear"
+			"m_typeString" "string" "2D"
+			"m_imageProcessorArray" "element_array" 
+			[
+				"CDmeImageProcessor"
+				{
+					"m_algorithm" "string" "ConvertToYCoCg"
+					"m_stringArg" "string" ""
+					"m_vFloat4Arg" "vector4" "0 0 0 0"
+				}
+			]
+		}
+    ]
+    "m_outputTypeString" "string" "2D"
+    "m_outputFormat" "string" "DXT5"
+	
+    "m_resourceType" "string" "PanoramaTexture"
+    "m_createMipmaps" "bool" "0"
+    "m_generateSpheremap" "bool" "0"
+    "m_forceSRGB" "bool" "0"
+    "m_convertToYCoCg" "bool" "1"
+	
+    "m_nOutputMaxDimension" "int" "0"
+    "m_textureOutputChannelArray" "element_array"
+    [
+        "CDmeTextureOutputChannel"
+        {
+            "m_inputTextureArray" "string_array" [ "InputTexture0" ]
+            "m_srcChannels" "string" "rgba"
+            "m_dstChannels" "string" "rgba"
+            "m_outputColorSpace" "string" "linear"
+        }
+    ]
+    "m_vClamp" "vector3" "0 0 0"
+    "m_bNoLod" "bool" "0"
+}

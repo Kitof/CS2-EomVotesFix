@@ -1,0 +1,14 @@
+"Gamemodes_Server.txt"
+{
+    "mapgroups"
+    {
+        "mg_tournament"
+        {
+            "name" "mg_tournament"
+            "maps"
+            {
+				// INSERT HERE
+            }
+        }
+    }
+}

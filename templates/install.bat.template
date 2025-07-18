@@ -1,0 +1,4 @@
+@echo off
+
+set "cur_path=%cd%"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -Verb RunAs powershell -ArgumentList '-NoExit -NoProfile -ExecutionPolicy Bypass -File \"%cur_path%\bin\install_workshop_thumbnails.ps1\" -WorkingDir \"%cur_path%\"'"

@@ -1,0 +1,617 @@
+# CS2 Workshop Thumbnails Client Installer by @Kitof
+
+#Requires -Version 5.1
+
+param(
+    [Parameter()]
+    [switch]$Force,
+    
+    [Parameter()]
+    [switch]$SkipBackup,
+
+    [Parameter()]
+    [switch]$Clean,
+
+    [Parameter()]
+    [string]$WorkingDir
+)
+
+# Configuration
+$Script:Config = @{
+    PackagePattern = '^workshop_thumbnails_(\d+)_dir\.vpk$'
+    GameInfoFileName = "gameinfo.gi"
+    BackupSuffix = "sav"
+    GameInfoMarker = "Game_LowViolence	csgo_lv"
+    RetryCount = 3
+}
+
+# Global variables
+$Script:WorkingDir = if ($WorkingDir) { $WorkingDir } else { Get-Location }
+$Script:Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+$Script:PackagesPath = Join-Path $Script:WorkingDir "packages"
+#region Utility Functions
+
+function Write-ColoredMessage {
+    param(
+        [string]$Message,
+        [string]$Color = "White",
+        [string]$Prefix = ""
+    )
+    
+    if ($Prefix) {
+        Write-Host "$Prefix " -NoNewline
+    }
+    Write-Host $Message -ForegroundColor $Color
+}
+
+function Write-SuccessMessage {
+    param([string]$Message)
+    Write-ColoredMessage $Message "Green"
+}
+
+function Write-WarningMessage {
+    param([string]$Message)
+    Write-ColoredMessage $Message "Yellow"
+}
+
+function Write-ErrorMessage {
+    param([string]$Message)
+    Write-ColoredMessage $Message "Red"
+}
+
+function Invoke-WithRetry {
+    param(
+        [scriptblock]$ScriptBlock,
+        [int]$MaxRetries = $Script:Config.RetryCount,
+        [int]$DelaySeconds = 1
+    )
+    
+    for ($i = 1; $i -le $MaxRetries; $i++) {
+        try {
+            return & $ScriptBlock
+        }
+        catch {
+            if ($i -eq $MaxRetries) {
+                throw
+            }
+            Write-WarningMessage "Attempt $i failed, retrying in $DelaySeconds seconds..."
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+}
+
+#endregion
+
+#region Prerequisites Functions
+
+function Install-PowerShellPrerequisites {
+    Write-Host "`nChecking and installing prerequisites..."
+    
+    try {
+        Install-PackageProvider -Name NuGet -Confirm:$false -Force | Out-Null
+        
+        if (-not (Get-InstalledModule -Name PowerHTML -ErrorAction SilentlyContinue)) {
+            Install-Module -Name PowerHTML -Confirm:$false -Force | Out-Null
+        }
+        
+        Add-Type -AssemblyName System.Drawing
+        Import-Module PowerHTML
+        
+        Write-SuccessMessage "PowerShell dependencies installed"
+    }
+    catch {
+        throw "Failed to install PowerShell prerequisites: $($_.Exception.Message)"
+    }
+}
+
+function Find-CS2Installation {
+    Write-Host "Locating CS2 installation..."
+    
+    # Try registry first
+    $cs2InstallDir = $null
+    if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Steam App 730") {
+        $cs2Path = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Steam App 730").InstallLocation
+        $cs2InstallDir = Join-Path $cs2Path "game\csgo"
+    }
+    
+    # Fallback to Steam library folders
+    if (-not $cs2InstallDir) {
+        $cs2InstallDir = Find-CS2InSteamLibraries
+    }
+    
+    if (-not $cs2InstallDir) {
+        throw "Unable to locate CS2 installation."
+    }
+    
+    Write-SuccessMessage "CS2 installation detected at $cs2InstallDir"
+    return $cs2InstallDir
+}
+
+function Find-CS2InSteamLibraries {
+    try {
+        $steamPath = (Get-ItemProperty -Path "HKCU:\Software\Valve\Steam").SteamPath
+        $pathsFile = Join-Path $steamPath "steamapps\libraryfolders.vdf"
+        
+        if (-not (Test-Path $pathsFile)) {
+            return $null
+        }
+        
+        $libraries = @($steamPath)
+        $pathVDF = Get-Content -Path $pathsFile
+        $pathRegex = [Regex]::new('"(([^"]*):\\([^"]*))"')
+        
+        foreach ($line in $pathVDF) {
+            if ($pathRegex.IsMatch($line)) {
+                $match = $pathRegex.Matches($line)[0].Groups[1].Value
+                $libraries += $match.Replace('\\', '\')
+            }
+        }
+        
+        foreach ($lib in $libraries) {
+            $cs2Path = Join-Path $lib "steamapps\common\Counter-Strike Global Offensive"
+            if (Test-Path (Join-Path $cs2Path "game")) {
+                return Join-Path $cs2Path "game\csgo"
+            }
+        }
+        
+        return $null
+    }
+    catch {
+        return $null
+    }
+}
+
+#endregion
+
+#region Cleanup Functions
+
+function Get-InstalledWorkshopPackages {
+    param([string]$CS2InstallDir)
+    
+    Write-Host "Scanning for installed workshop thumbnail packages..."
+    
+    # Chercher tous les fichiers VPK workshop_thumbnails
+    $installedPackages = Get-ChildItem -Path $CS2InstallDir -Filter "workshop_thumbnails_*.vpk" -File -ErrorAction SilentlyContinue
+    
+    Write-SuccessMessage "Found $($installedPackages.Count) installed package file(s)"
+    return $installedPackages
+}
+
+function Get-GameInfoBackups {
+    param([string]$CS2InstallDir)
+    
+    $backups = Get-ChildItem -Path $CS2InstallDir -Filter "gameinfo.gi.*.$($Script:Config.BackupSuffix)" -File -ErrorAction SilentlyContinue | 
+               Sort-Object LastWriteTime -Descending
+    
+    return $backups
+}
+
+function Restore-OriginalGameInfo {
+    param([string]$CS2InstallDir)
+    
+    Write-Host "Restoring original gameinfo.gi..."
+    
+    $gameinfoPath = Join-Path $CS2InstallDir $Script:Config.GameInfoFileName
+    $backups = Get-GameInfoBackups -CS2InstallDir $CS2InstallDir
+    
+    if ($backups.Count -eq 0) {
+        Write-WarningMessage "No gameinfo.gi backups found - creating clean version"
+        return Remove-WorkshopEntriesFromGameInfo -GameInfoPath $gameinfoPath
+    }
+    
+    # Use the most recent backup
+    $latestBackup = $backups[0]
+    
+    try {
+        Copy-Item -Path $latestBackup.FullName -Destination $gameinfoPath -Force
+        Write-SuccessMessage "Restored gameinfo.gi from backup: $($latestBackup.Name)"
+        return $true
+    }
+    catch {
+        Write-ErrorMessage "Failed to restore backup: $($_.Exception.Message)"
+        Write-WarningMessage "Attempting to clean gameinfo.gi manually..."
+        return Remove-WorkshopEntriesFromGameInfo -GameInfoPath $gameinfoPath
+    }
+}
+
+function Remove-WorkshopEntriesFromGameInfo {
+    param([string]$GameInfoPath)
+    
+    try {
+        $lines = Get-Content $GameInfoPath -Encoding UTF8
+        $cleanedLines = @()
+        
+        foreach ($line in $lines) {
+            # Skip lines that contain workshop_thumbnails
+            if ($line -notmatch 'workshop_thumbnails_\d+\.vpk') {
+                $cleanedLines += $line
+            }
+            else {
+                Write-Host "    Removing line: $($line.Trim())" -ForegroundColor Yellow
+            }
+        }
+        
+        [System.IO.File]::WriteAllLines($GameInfoPath, $cleanedLines, $Script:Utf8NoBom)
+        Write-SuccessMessage "Manually cleaned workshop entries from gameinfo.gi"
+        return $true
+    }
+    catch {
+        Write-ErrorMessage "Failed to clean gameinfo.gi: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Remove-WorkshopPackageFiles {
+    param([string]$CS2InstallDir)
+    
+    Write-Host "Removing workshop thumbnail package files..."
+    
+    # Chercher tous les fichiers VPK workshop_thumbnails
+    $allWorkshopFiles = Get-ChildItem -Path $CS2InstallDir -Filter "workshop_thumbnails_*.vpk" -File -ErrorAction SilentlyContinue
+    $removedCount = 0
+    
+    if ($allWorkshopFiles.Count -eq 0) {
+        Write-Host "No workshop thumbnail packages found to remove"
+        return $false
+    }
+    
+    foreach ($file in $allWorkshopFiles) {
+        try {
+            Remove-Item -Path $file.FullName -Force
+            Write-Host "    Removed: $($file.Name)" -ForegroundColor Yellow
+            $removedCount++
+        }
+        catch {
+            Write-WarningMessage "Failed to remove $($file.Name): $($_.Exception.Message)"
+        }
+    }
+    
+    Write-SuccessMessage "Removed $removedCount package file(s)"
+    return $removedCount -gt 0
+}
+
+function Invoke-WorkshopThumbnailsCleanup {
+    param([string]$CS2InstallDir)
+    
+    Write-Host "`nStarting workshop thumbnails cleanup..." -ForegroundColor Cyan
+    
+    $results = @{
+        GameInfoRestored = $false
+        PackagesRemoved = $false
+    }
+    
+    try {
+        # Step 1: Restore original gameinfo.gi
+        $results.GameInfoRestored = Restore-OriginalGameInfo -CS2InstallDir $CS2InstallDir
+        
+        # Step 2: Remove workshop package files
+        $results.PackagesRemoved = Remove-WorkshopPackageFiles -CS2InstallDir $CS2InstallDir
+    
+        
+        return $results
+    }
+    catch {
+        Write-ErrorMessage "Cleanup failed: $($_.Exception.Message)"
+        return $results
+    }
+}
+
+#endregion
+
+#region Package Discovery Functions
+
+function Get-WorkshopThumbnailPackages {
+    Write-Host "`nScanning for workshop thumbnail packages..."
+    
+    $workshopPackages = Get-ChildItem -File -Path $Script:PackagesPath | Where-Object {
+        $_.Name -match $Script:Config.PackagePattern
+    }
+    
+    Write-SuccessMessage "$($workshopPackages.Count) package(s) found"
+    
+    if ($workshopPackages.Count -eq 0) {
+        throw "No workshop thumbnail packages found in current directory."
+    }
+    
+    return $workshopPackages
+}
+
+function Get-CollectionIdFromPackage {
+    param([System.IO.FileInfo]$Package)
+    
+    if ($Package.Name -match $Script:Config.PackagePattern) {
+        return $matches[1]
+    }
+    
+    throw "Invalid package filename: $($Package.Name)"
+}
+
+#endregion
+
+#region Installation Functions
+
+function Test-PackageAlreadyInstalled {
+    param(
+        [string]$CollectionID,
+        [string]$CS2InstallDir
+    )
+    
+    $gameinfoPath = Join-Path $CS2InstallDir $Script:Config.GameInfoFileName
+    $expectedLine = "			Game	csgo/workshop_thumbnails_$($CollectionID).vpk"
+    
+    if (-not (Test-Path $gameinfoPath)) {
+        throw "gameinfo.gi not found at $gameinfoPath"
+    }
+    
+    $result = Select-String -Path $gameinfoPath -SimpleMatch $expectedLine -Quiet
+    return $result
+}
+
+function New-GameInfoBackup {
+    param(
+        [string]$GameInfoPath,
+        [string]$CollectionID
+    )
+    
+    if ($SkipBackup) {
+        Write-WarningMessage "[$CollectionID] Backup skipped (SkipBackup flag set)"
+        return $null
+    }
+    
+    $timestamp = Get-Date -Format "yyyyMMddHHmmss"
+    $backupName = "$GameInfoPath.$timestamp.$($Script:Config.BackupSuffix)"
+    
+    try {
+        Copy-Item -Path $GameInfoPath -Destination $backupName -Force
+        Write-SuccessMessage "[$CollectionID] Backup created: $backupName"
+        return $backupName
+    }
+    catch {
+        throw "Failed to create backup: $($_.Exception.Message)"
+    }
+}
+
+function Update-GameInfoFile {
+    param(
+        [string]$GameInfoPath,
+        [string]$CollectionID
+    )
+    
+    $newLine = "			Game	csgo/workshop_thumbnails_$($CollectionID).vpk"
+    
+    try {
+        $lines = Get-Content $GameInfoPath -Encoding UTF8
+        $result = Select-String -Path $GameInfoPath -SimpleMatch $Script:Config.GameInfoMarker | Select-Object -First 1
+        
+        if (-not $result) {
+            throw "Marker '$($Script:Config.GameInfoMarker)' not found in gameinfo.gi"
+        }
+        
+        $insertIndex = $result.LineNumber - 1
+        $before = $lines[0..($insertIndex - 1)]
+        $after = $lines[$insertIndex..($lines.Count - 1)]
+        $newContent = ($before + $newLine + $after) -join "`r`n"
+        
+        [System.IO.File]::WriteAllText($GameInfoPath, $newContent, $Script:Utf8NoBom)
+        Write-SuccessMessage "[$CollectionID] gameinfo.gi updated successfully"
+    }
+    catch {
+        throw "Failed to update gameinfo.gi: $($_.Exception.Message)"
+    }
+}
+
+function Copy-PackageFiles {
+    param(
+        [string]$CollectionID,
+        [string]$CS2InstallDir
+    )
+    
+    $packageFiles = Get-ChildItem -Path $Script:PackagesPath -Filter "workshop_thumbnails_$($CollectionID)_*.vpk" -File
+    
+    if ($packageFiles.Count -eq 0) {
+        throw "No package files found for collection $CollectionID"
+    }
+    
+    $copiedCount = 0
+    foreach ($packageFile in $packageFiles) {
+        try {
+            $destinationPath = Join-Path $CS2InstallDir $packageFile.Name
+            Copy-Item -Path $packageFile.FullName -Destination $destinationPath -Force
+            $copiedCount++
+        }
+        catch {
+            Write-WarningMessage "Failed to copy $($packageFile.Name): $($_.Exception.Message)"
+        }
+    }
+    
+    if ($copiedCount -eq 0) {
+        throw "Failed to copy any package files"
+    }
+    
+    Write-SuccessMessage "[$CollectionID] Copied $copiedCount package file(s)"
+}
+
+function Install-WorkshopThumbnailPackage {
+    param(
+        [System.IO.FileInfo]$Package,
+        [string]$CS2InstallDir
+    )
+    
+    try {
+        $collectionID = Get-CollectionIdFromPackage -Package $Package
+        Write-Host "    Processing package for collection $collectionID..." -ForegroundColor Green
+        
+        # Check if already installed
+        if (Test-PackageAlreadyInstalled -CollectionID $collectionID -CS2InstallDir $CS2InstallDir) {
+            if (-not $Force) {
+                Write-WarningMessage "[$collectionID] Already installed (use -Force to reinstall)"
+                return $true
+            }
+            Write-WarningMessage "[$collectionID] Already installed, but Force flag set - reinstalling"
+        }
+        
+        # Create backup
+        $gameinfoPath = Join-Path $CS2InstallDir $Script:Config.GameInfoFileName
+        $backupPath = New-GameInfoBackup -GameInfoPath $gameinfoPath -CollectionID $collectionID
+        
+        try {
+            # Update gameinfo.gi
+            Update-GameInfoFile -GameInfoPath $gameinfoPath -CollectionID $collectionID
+            
+            # Copy package files
+            Copy-PackageFiles -CollectionID $collectionID -CS2InstallDir $CS2InstallDir
+            
+            Write-SuccessMessage "[$collectionID] Installation completed successfully"
+            return $true
+        }
+        catch {
+            # Restore backup if update failed
+            if ($backupPath -and (Test-Path $backupPath)) {
+                try {
+                    Copy-Item -Path $backupPath -Destination $gameinfoPath -Force
+                    Write-WarningMessage "[$collectionID] Restored backup due to installation failure"
+                }
+                catch {
+                    Write-ErrorMessage "[$collectionID] Failed to restore backup: $($_.Exception.Message)"
+                }
+            }
+            throw
+        }
+    }
+    catch {
+        Write-ErrorMessage "[$collectionID] Installation failed: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+#endregion
+
+#region Main Functions
+
+function Show-CleanupSummary {
+    param([hashtable]$Results)
+    
+    Write-Host "`nWORKSHOP THUMBNAILS CLEANUP - SUMMARY" -ForegroundColor Cyan
+    
+    Write-Host "`nGameinfo.gi restored: $(if ($Results.GameInfoRestored) { 'Yes' } else { 'No' })" -ForegroundColor $(if ($Results.GameInfoRestored) { 'Green' } else { 'Red' })
+    Write-Host "Package files removed: $(if ($Results.PackagesRemoved) { 'Yes' } else { 'No' })" -ForegroundColor $(if ($Results.PackagesRemoved) { 'Green' } else { 'Red' })
+    
+    $overallSuccess = $Results.GameInfoRestored -and $Results.PackagesRemoved
+    
+    if ($overallSuccess) {
+        Write-Host "`nCleanup completed successfully!" -ForegroundColor Green
+        Write-Host "All workshop thumbnails have been removed. Restart CS2 to see the changes." -ForegroundColor Yellow
+    }
+    else {
+        Write-Host "`nCleanup completed with some issues. Check the output above for details." -ForegroundColor Yellow
+    }
+
+    
+    return $overallSuccess
+}
+
+function Show-Summary {
+    param(
+        [array]$Results,
+        [int]$TotalPackages
+    )
+    
+    $successCount = ($Results | Where-Object { $_ -eq $true }).Count
+    $failureCount = $TotalPackages - $successCount
+    
+    Write-Host "WORKSHOP THUMBNAILS INSTALLATION - SUMMARY" -ForegroundColor Cyan
+    
+    Write-Host "`nTotal Packages: $TotalPackages" -ForegroundColor White
+    Write-Host "Successfully Installed: $successCount" -ForegroundColor Green
+    Write-Host "Failed: $failureCount" -ForegroundColor $(if ($failureCount -eq 0) { 'Green' } else { 'Red' })
+    
+    if ($failureCount -gt 0) {
+        Write-Host "`nSome packages failed to install. Check the output above for details." -ForegroundColor Yellow
+        return $false
+    }
+    
+    return $true
+}
+
+function Start-Main {
+    try {
+        Write-Host "CS2 Workshop Thumbnails Client Installer by @Kitof" -ForegroundColor Cyan
+        
+        if ($WorkingDir) {
+            if (-not (Test-Path $WorkingDir)) {
+                throw "Specified working directory does not exist: $WorkingDir"
+            }
+            
+            $Script:WorkingDir = Resolve-Path $WorkingDir
+            Write-Host "Using working directory: $Script:WorkingDir" -ForegroundColor Cyan
+        }
+
+        if ($Clean) {
+            Write-Host "CS2 Workshop Thumbnails Cleanup" -ForegroundColor Cyan
+            
+            # Step 1: Find CS2 installation
+            $cs2InstallDir = Find-CS2Installation
+            
+            # Step 2: Perform cleanup
+            $cleanupResults = Invoke-WorkshopThumbnailsCleanup -CS2InstallDir $cs2InstallDir
+            
+            # Step 3: Show cleanup summary
+            $success = Show-CleanupSummary -Results $cleanupResults
+            
+            if (-not $success) {
+                exit 1
+            }
+            
+            return
+        }
+
+        # Step 1: Install prerequisites
+        Install-PowerShellPrerequisites
+        
+        # Step 2: Find CS2 installation
+        $cs2InstallDir = Find-CS2Installation
+        
+        # Step 3: Discover packages
+        $workshopPackages = Get-WorkshopThumbnailPackages
+        
+        # Step 4: Install packages
+        Write-Host "`nInstalling workshop thumbnail packages..."
+        $results = @()
+        
+        foreach ($package in $workshopPackages) {
+            $result = Install-WorkshopThumbnailPackage -Package $package -CS2InstallDir $cs2InstallDir
+            $results += $result
+        }
+        
+        # Step 5: Show summary
+        $allSuccessful = Show-Summary -Results $results -TotalPackages $workshopPackages.Count
+        
+        if ($allSuccessful) {
+            Write-Host "`nAll packages installed successfully!" -ForegroundColor Green
+            Write-Host "Restart CS2 to see the new thumbnails." -ForegroundColor Yellow
+        }
+        else {
+            Write-Host "`nInstallation completed with some failures." -ForegroundColor Yellow
+            exit 1
+        }
+    }
+    catch {
+        Write-Host "`nInstallation failed: $($_.Exception.Message)" -ForegroundColor Red
+        
+        if ($_.Exception.InnerException) {
+            Write-Host "Inner exception: $($_.Exception.InnerException.Message)" -ForegroundColor Red
+        }
+        
+        Write-Host "`nStack trace:" -ForegroundColor Yellow
+        Write-Host $_.ScriptStackTrace -ForegroundColor Yellow
+        
+        exit 1
+    }
+}
+
+#endregion
+
+# Script execution
+if ($MyInvocation.InvocationName -ne '.') {
+    Start-Main
+}
