@@ -387,7 +387,7 @@ function Update-GameInfoFile {
             throw "Marker '$($Script:Config.GameInfoMarker)' not found in gameinfo.gi"
         }
         
-        $insertIndex = $result.LineNumber - 1
+        $insertIndex = $result.LineNumber
         $before = $lines[0..($insertIndex - 1)]
         $after = $lines[$insertIndex..($lines.Count - 1)]
         $newContent = ($before + $newLine + $after) -join "`r`n"

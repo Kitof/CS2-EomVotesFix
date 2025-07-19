@@ -19,7 +19,7 @@ param(
 $Script:Config = @{
     ThumbnailSize = @{ Width = 640; Height = 360 }
     PrefixPriority = @("de_", "aim_", "cs_", "ar_")
-    ExcludedSuffixes = @("skybox", "prefab")
+    ExcludedSuffixes = @("skybox", "lighting", "props", "instances", "nav", "radar")
     RetryCount = 3
     SteamAPIUrl = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/"
     SteamCMDUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
@@ -375,40 +375,42 @@ function Get-MapInfoFromCollection {
     Write-Host "`nRetrieving map information from collection..."
     
     try {
-        # Use Invoke-WebRequest instead of IE COM for better reliability
-        $response = Invoke-WebRequest -Uri $CollectionURL -UseBasicParsing
-        $html = $response.Content
-        
-        # Parse workshop items using regex (more reliable than IE COM)
-        $itemPattern = '<div class="workshopItem".*?<a href="[^"]*steamcommunity\.com/sharedfiles/filedetails/\?id=(\d+)"'
-        $incompatiblePattern = '<div class="incompatible"'
-        
-        $items = [regex]::Matches($html, $itemPattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
-        
+        try {
+            $ie = New-Object -ComObject "InternetExplorer.Application"
+        } catch {
+            throw "Failed to initiate headless browser. It's happen sometimes, you need to reboot."
+        }
+
+        $ie.Visible = $false
+        $ie.Navigate($CollectionURL)
+        while ($ie.Busy -eq $true -or $ie.ReadyState -ne 4) {
+            Start-Sleep -Milliseconds 500
+        }
+        $document = $ie.Document
+        $cards = $document.getElementsByTagName('div') | Where-Object { $_.className -eq 'workshopItem' }
+
         $mapList = @()
-        $totalItems = $items.Count
+        $totalItems = $cards.Count
         $currentItem = 0
         
-        foreach ($match in $items) {
+        foreach ($card in $cards) {
             $currentItem++
-            $id = $match.Groups[1].Value
+            $link = $card.getElementsByTagName('a') | Select-Object -First 1
+            if ((-not $link) -or (-not $link.href -like '*steamcommunity.com/sharedfiles/filedetails/?id=*')) {
+                continue
+            }
+            $id = $link.href.Split('=')[1]
             
             Write-Progress -Activity "Processing Maps" -Status "Map $currentItem of $totalItems (ID: $id)" -PercentComplete (($currentItem / $totalItems) * 100)
-            
             Write-Host "`nProcessing map [$id]"
             
             # Check if map is incompatible (CSGO map)
-            $itemStart = $match.Index
-            $itemEnd = $html.IndexOf('</div>', $itemStart + 1000) # Look ahead for end of item
-            if ($itemEnd -eq -1) { $itemEnd = $itemStart + 2000 }
-            
-            $itemContent = $html.Substring($itemStart, $itemEnd - $itemStart)
-            
-            if ($itemContent -match $incompatiblePattern) {
+
+            $incompatible = $card.getElementsByClassName('incompatible')
+            if ($incompatible.length -gt 0) {
                 Write-WarningMessage "[$id] is a CSGO map. Ignoring."
                 continue
             }
-            
             Write-SuccessMessage "[$id] is a CS2 map. Processing..."
             
             try {
@@ -539,7 +541,7 @@ function Get-MapNameFromVPK {
             throw "SteamCMD download failed with exit code $($process.ExitCode)"
         }
         
-        $vpkDir = Join-Path (Split-Path $SteamCMDPath) "steamapps" "workshop" "content" "730" $MapID
+        $vpkDir = Join-Path (Split-Path $SteamCMDPath) "steamapps/workshop/content/730/$MapID"
         $vpkFiles = Get-ChildItem -Path $vpkDir -Filter "*.vpk" -ErrorAction SilentlyContinue
         
         if ($vpkFiles.Count -eq 0) {
@@ -988,6 +990,8 @@ function Copy-InstallationScript {
     param([string]$ClientPath)
     
     $templatePath = Join-Path $Script:TemplatesPath "install_workshop_thumbnails.ps1.template"
+    New-DirectoryIfNotExists (Join-Path $ClientPath "bin")
+
     $destPath = Join-Path $ClientPath "bin/install_workshop_thumbnails.ps1"
     
     if (Test-Path $templatePath) {
@@ -1068,7 +1072,7 @@ function New-ServerConfiguration {
     }
     
     # Get workshop and official maps
-    $workshopMaps = $MapList | ForEach-Object { '"{0}"' -f $_.MapName }
+    $workshopMaps = $MapList | ForEach-Object { '               "{0}"' -f $_.MapName }
     $officialMaps = @()
     
     if ($IncludeOfficialMaps) {
