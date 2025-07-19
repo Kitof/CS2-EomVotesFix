@@ -24,7 +24,9 @@ $Script:Config = @{
     SteamAPIUrl = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/"
     SteamCMDUrl = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
     CSGOCollectionFootprint = '<span class="breadcrumb_separator">&gt;&nbsp;</span><a data-panel="{&quot;noFocusRing&quot;:true}" href="https://steamcommunity.com/workshop/browse/?section=collections&appid=730">'
-    
+    VCRedistUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+    VCRedistRegistryKey = "HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64"
+   
     # GitHub Release Tools Configuration
     GitHubTools = @{
         Source2Viewer = @{
@@ -176,6 +178,131 @@ function Install-PowerShellPrerequisites {
     }
     catch {
         throw "Failed to install PowerShell prerequisites: $($_.Exception.Message)"
+    }
+}
+
+function Test-VCRedistInstalled {
+    Write-Host "Checking Visual C++ Runtime installation..."
+    
+    try {
+        # Vérifier plusieurs emplacements possibles pour VC++ Runtime
+        $registryPaths = @(
+            "HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64",
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x64",
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
+        )
+        
+        foreach ($path in $registryPaths) {
+            if ($path -like "*Uninstall*") {
+                # Rechercher dans les programmes installés
+                $vcredist = Get-ItemProperty $path -ErrorAction SilentlyContinue | 
+                           Where-Object { $_.DisplayName -like "*Visual C++*Redistributable*2015*" -and $_.DisplayName -like "*x64*" }
+                if ($vcredist) {
+                    Write-SuccessMessage "Visual C++ Runtime detected: $($vcredist[0].DisplayName)"
+                    return $true
+                }
+            }
+            else {
+                if (Test-Path $path) {
+                    $runtime = Get-ItemProperty $path -ErrorAction SilentlyContinue
+                    if ($runtime -and $runtime.Installed -eq 1) {
+                        Write-SuccessMessage "Visual C++ Runtime detected (version $($runtime.Version))"
+                        return $true
+                    }
+                }
+            }
+        }
+        
+        Write-WarningMessage "Visual C++ Runtime not detected"
+        return $false
+    }
+    catch {
+        Write-WarningMessage "Could not verify Visual C++ Runtime installation: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Install-VCRedist {
+    Write-Host "Installing Visual C++ Runtime..."
+    
+    $tempPath = Join-Path $env:TEMP "vc_redist.x64.exe"
+    
+    try {
+        # Télécharger VC++ Runtime
+        Write-Host "    Downloading Visual C++ Runtime..." -ForegroundColor Yellow
+        Invoke-WebRequest -Uri $Script:Config.VCRedistUrl -OutFile $tempPath -UseBasicParsing
+        
+        if (-not (Test-Path $tempPath)) {
+            throw "Failed to download Visual C++ Runtime installer"
+        }
+        
+        # Installer silencieusement
+        Write-Host "    Installing Visual C++ Runtime (this may take a few minutes)..." -ForegroundColor Yellow
+        $process = Start-Process -FilePath $tempPath -ArgumentList "/install", "/quiet", "/norestart" -Wait -PassThru
+        
+        # Vérifier le code de sortie
+        switch ($process.ExitCode) {
+            0 { 
+                Write-SuccessMessage "Visual C++ Runtime installed successfully"
+                $success = $true
+            }
+            1638 { 
+                Write-SuccessMessage "Visual C++ Runtime already installed (newer version detected)"
+                $success = $true
+            }
+            3010 { 
+                Write-SuccessMessage "Visual C++ Runtime installed successfully (restart required)"
+                Write-WarningMessage "A system restart may be required for full functionality"
+                $success = $true
+            }
+            default { 
+                Write-ErrorMessage "Visual C++ Runtime installation failed (Exit Code: $($process.ExitCode))"
+                $success = $false
+            }
+        }
+        
+        return $success
+    }
+    catch {
+        Write-ErrorMessage "Failed to install Visual C++ Runtime: $($_.Exception.Message)"
+        return $false
+    }
+    finally {
+        # Nettoyer le fichier temporaire
+        if (Test-Path $tempPath) {
+            try {
+                Remove-Item $tempPath -Force
+            }
+            catch {
+                Write-WarningMessage "Could not remove temporary file: $tempPath"
+            }
+        }
+    }
+}
+
+function Install-VCRuntimeIfNeeded {
+    if (-not (Test-VCRedistInstalled)) {
+        Write-Host "`nVisual C++ Runtime is required for VPKEdit..." -ForegroundColor Yellow
+        
+        $install = Read-Host "Would you like to install Visual C++ Runtime automatically? [Y/n]"
+        
+        if ([string]::IsNullOrWhiteSpace($install) -or $install.ToLower() -eq "y") {
+            $success = Install-VCRedist
+            
+            if (-not $success) {
+                throw @"
+Visual C++ Runtime installation failed. You may need to install it manually.
+Download link: $($Script:Config.VCRedistUrl)
+"@
+
+            }
+        }
+        else {
+            throw @"
+Visual C++ Runtime installation skipped.
+Download link: $($Script:Config.VCRedistUrl)
+"@
+        }
     }
 }
 
@@ -336,6 +463,8 @@ function Install-Prerequisites {
     
     Install-PowerShellPrerequisites
     
+    Install-VCRuntimeIfNeeded
+
     New-DirectoryIfNotExists $Script:LibPath
     
     $steamcmdExe = Install-SteamCMD $Script:LibPath
@@ -1172,8 +1301,8 @@ function Start-Main {
         $cs2InstallDir = Find-CS2Installation
         
         # Step 3: Install prerequisites
-        $tools = Install-Prerequisites -CS2InstallDir $cs2InstallDir
-        
+        $tools = Install-Prerequisites -CS2InstallDir $cs2InstallDir      
+
         # Step 4: Process maps
         $mapList = Get-MapInfoFromCollection -CollectionURL $collectionURL -SteamCMDPath $tools.SteamCMD -Source2ViewerPath $tools.Source2Viewer
         

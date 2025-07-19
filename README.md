@@ -8,7 +8,7 @@ I tried to understand why **CS2 does not display workshop map thumbnails during 
 
 > The fix is complex, requires multiple steps, and affects clients more than the server.
 
-To make deployment **easy during a LAN event I organized**, the script is written in **PowerShell**, and *it will generate the script to share with the players* (inside `build/client/*`).
+To make deployment **easy during a LAN event I organized**, the script is written in **PowerShell**, and *it will generate the script to share with the players* (inside `build/client/*`. Just copy all files and launch install.bat or uninstall.bat to rollback).
 
 Any PC under windows do the job. You don't need to generate the script from the server, but the `gamemodes_server.txt` file to copy to the server is also generated.
 
