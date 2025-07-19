@@ -16,7 +16,7 @@ Any PC under windows do the job. You don't need to generate the script from the 
 
 ## Requirements to generate the client script
 
-- Install the [CS2 Workshop Tools] (https://developer.valvesoftware.com/wiki/Counter-Strike_2_Workshop_Tools/Installing_and_Launching_Tools)
+- Install the [CS2 Workshop Tools](https://developer.valvesoftware.com/wiki/Counter-Strike_2_Workshop_Tools/Installing_and_Launching_Tools)
 
 - Know your **Workshop Collection ID**  
   Example: `https://steamcommunity.com/sharedfiles/filedetails/?id=*3082703162*`
@@ -25,9 +25,9 @@ Any PC under windows do the job. You don't need to generate the script from the 
 
 🛠️ All other dependencies are downloaded automatically - many thanks for their works :
 
-- [Source 2 Viewer] (https://valveresourceformat.github.io)
-- [VPKEdit] (https://github.com/craftablescience/VPKEdit)
-- [SteamCMD] (https://developer.valvesoftware.com/wiki/SteamCMD)
+- [Source 2 Viewer](https://valveresourceformat.github.io)
+- [VPKEdit](https://github.com/craftablescience/VPKEdit)
+- [SteamCMD](https://developer.valvesoftware.com/wiki/SteamCMD)
 
 ---
 
@@ -39,7 +39,7 @@ Any PC under windows do the job. You don't need to generate the script from the 
   - the internal map name (e.g. `de_bank`)
   - a friendly name (e.g. `Bank`)
 - Retrieves the thumbnail via the Steam API
-- Converts the `.png` to `.vtex_c` (CS2-compatible format for thumbnails)
+- Compile the `.png` into `.vtex_c` (CS2-compatible format for thumbnails)
 - Edits `gamemodes.txt` to include the map list
 - Updates all language files to include the friendly names
 - Packages everything into a `.vpk`
