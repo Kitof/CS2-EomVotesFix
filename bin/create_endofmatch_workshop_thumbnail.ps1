@@ -535,11 +535,21 @@ function Get-MapInfoFromCollection {
             
             # Check if map is incompatible (CSGO map)
 
-            $incompatible = $card.getElementsByClassName('incompatible')
-            if ($incompatible.length -gt 0) {
+            $allDivs = $card.getElementsByTagName('div')
+            $incompatible = $false
+
+            foreach ($div in $allDivs) {
+                if ($div.className -eq 'incompatible') {
+                    $incompatible = $true
+                    break
+                }
+            }
+
+            if ($incompatible) {
                 Write-WarningMessage "[$id] is a CSGO map. Ignoring."
                 continue
             }
+            
             Write-SuccessMessage "[$id] is a CS2 map. Processing..."
             
             try {
