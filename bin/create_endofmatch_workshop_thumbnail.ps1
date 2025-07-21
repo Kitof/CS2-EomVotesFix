@@ -121,6 +121,38 @@ function Remove-DirectoryIfExists {
     }
 }
 
+function Clean-StringAdvanced {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$InputString,
+        [switch]$RemoveAccents
+    )
+    
+    $ProcessedString = $InputString
+    
+    if ($RemoveAccents) {
+        # Use Unicode normalization to decompose accented characters
+        $normalized = $ProcessedString.Normalize([Text.NormalizationForm]::FormD)
+        $StringBuilder = New-Object Text.StringBuilder
+        
+        for ($i = 0; $i -lt $normalized.Length; $i++) {
+            $c = $normalized[$i]
+            $category = [Globalization.CharUnicodeInfo]::GetUnicodeCategory($c)
+            
+            # Ignore diacritic marks (accents)
+            if ($category -ne [Globalization.UnicodeCategory]::NonSpacingMark) {
+                [void]$StringBuilder.Append($c)
+            }
+        }
+        
+        $ProcessedString = $StringBuilder.ToString()
+    }
+    
+    # Keep only a-z, A-Z, spaces, and brackets
+    $CleanedString = $ProcessedString -replace '[^a-zA-Z\[\] ]', ''
+    
+    return $CleanedString
+}
 #endregion
 
 #region Validation Functions
@@ -755,8 +787,7 @@ function Get-FriendlyMapTitle {
         }
         return $rootName.Substring(0,1).ToUpper() + $rootName.Substring(1)
     }
-    
-    return $MapName.Substring(0,1).ToUpper() + $MapName.Substring(1)
+    return  Clean-String ($MapName.Substring(0,1).ToUpper() + $MapName.Substring(1)) -RemoveAccents
 }
 
 function Get-CleanTitleFromOriginal {
@@ -780,7 +811,7 @@ function Get-CleanTitleFromOriginal {
     if ($cleanTitle.Length -gt 15) {
         return ""
     }
-    return $cleanTitle
+    return Clean-String $cleanTitle -RemoveAccents
 }
 #endregion
 
