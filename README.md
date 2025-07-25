@@ -2,7 +2,7 @@
 
 ![Alt text](img/VoteWithThumbnails.png?raw=true "Vote With Thumbnails")
 
-I tried to understand why **CS2 does not display workshop map thumbnails during end-of-match voting** when the dedicated server is launched with a map collection (`+host_workshop_collection`).
+I tried to understand why **CS2 does not display workshop map thumbnails during end-of-match voting** when the dedicated server is launched with a map collection (`+host_workshop_collection`). 
 
 [I already did the job for CSGO](https://github.com/Kitof/csgo_workshop_vote_fix/), but things are more complex for CS2.
 
