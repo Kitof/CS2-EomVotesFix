@@ -121,7 +121,7 @@ function Remove-DirectoryIfExists {
     }
 }
 
-function Clean-StringAdvanced {
+function Get-CleanString {
     param(
         [Parameter(Mandatory=$true)]
         [string]$InputString,
@@ -787,7 +787,7 @@ function Get-FriendlyMapTitle {
         }
         return $rootName.Substring(0,1).ToUpper() + $rootName.Substring(1)
     }
-    return  Clean-String ($MapName.Substring(0,1).ToUpper() + $MapName.Substring(1)) -RemoveAccents
+    return  Get-CleanString ($MapName.Substring(0,1).ToUpper() + $MapName.Substring(1)) -RemoveAccents
 }
 
 function Get-CleanTitleFromOriginal {
@@ -811,7 +811,7 @@ function Get-CleanTitleFromOriginal {
     if ($cleanTitle.Length -gt 15) {
         return ""
     }
-    return Clean-String $cleanTitle -RemoveAccents
+    return Get-CleanString $cleanTitle -RemoveAccents
 }
 #endregion
 
@@ -1242,7 +1242,7 @@ function New-ServerConfiguration {
     }
     
     # Get workshop and official maps
-    $workshopMaps = $MapList | ForEach-Object { '               "{0}"' -f $_.MapName }
+    $workshopMaps = $MapList | ForEach-Object { '				"{0}" ""' -f $_.MapName }
     $officialMaps = @()
     
     if ($IncludeOfficialMaps) {
@@ -1294,7 +1294,10 @@ function Show-Summary {
     
     Write-Host "`nOutput Files:" -ForegroundColor Yellow
     Write-Host "  - Files to send to all players: build/client/*" -ForegroundColor Gray
-    Write-Host "  - File to put to the dedicated Server game/csgo : build/server/gamemodes_server.txt" -ForegroundColor Gray
+    if ($IncludeOfficialMaps) {
+        Write-Host "  - File to put to the dedicated Server game/csgo : build/server/gamemodes_server.txt" -ForegroundColor Gray
+    }
+    Write-Host "  - Launch server with at least parameters : -insecure +host_workshop_collection $CollectionID ... " -ForegroundColor Gray
 
 }
 
@@ -1315,7 +1318,7 @@ function Confirm-OfficialMapsInclusion {
     Write-Host "`nDetected $($officialMaps.Count) official maps:" -ForegroundColor Cyan
     $officialMaps | ForEach-Object { Write-Host "  - $_" -ForegroundColor Gray }
     
-    Write-Host "`nInclude official maps in server configuration? [Y/n]" -ForegroundColor Cyan -NoNewline
+    Write-Host "`nInclude official maps in server configuration (to mix classic maps with workshop maps in the maps list) ? [Y/n]" -ForegroundColor Cyan -NoNewline
     $response = Read-Host
     
     return ([string]::IsNullOrWhiteSpace($response) -or $response.ToLower() -eq "y")

@@ -6,11 +6,12 @@ I tried to understand why **CS2 does not display workshop map thumbnails during 
 
 [I already did the job for CSGO](https://github.com/Kitof/csgo_workshop_vote_fix/), but things are more complex for CS2.
 
-> The fix is complex, requires multiple steps, and affects clients more than the server.
+> The fix is complex, requires multiple steps, and affects clients more than the server. Unfortunately, you have to modify gameinfo.gi, which is forbidden by VAC (even though this modification is completely harmless), **so clients will no longer be able to connect to VAC servers and your server will have to be launched with -insecure.**
+Note that a rollback is provided via an uninstall.bat file and takes just 1 click to return to the initial state and allow you to play on VAC servers again.
 
 To make deployment **easy during a LAN event I organized**, the script is written in **PowerShell**, and *it will generate the script to share with the players* (inside `build/client/*`. Just copy all files and launch install.bat or uninstall.bat to rollback).
 
-Any PC under windows do the job. You don't need to generate the script from the server, but the `gamemodes_server.txt` file to copy to the server is also generated.
+Any PC under windows do the job. You don't need to generate the script from the server, but the `gamemodes_server.txt` file to copy to the server is also generated. (Only needed if you want to mix Classic and Workshop maps, or if you have an another plugin who use it)
 
 ---
 
@@ -43,7 +44,7 @@ Any PC under windows do the job. You don't need to generate the script from the 
 - Edits `gamemodes.txt` to include the map list
 - Updates all language files to include the friendly names
 - Packages everything into a `.vpk`
-- Generates `gamemodes_server.txt` for the server
+- Generates `gamemodes_server.txt` for the server (needed only if you want to mix classic and workshop maps)
 - Generates the **client script** to:
   - copy the `.vpk` into `game/csgo`
   - modify `gameinfo.gi` to include the `.vpk`
